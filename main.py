@@ -1,4 +1,3 @@
-
 import nidaqmx
 import time
 import csv
@@ -16,10 +15,6 @@ SAMPLE_INTERVAL = 100  # Milliseconds
 MAX_SAMPLES = 200
 SMOOTHING_WINDOW = 10
 
-# File settings
-FILE_NAME = "daq_readings.txt"
-SAVE_DURATION = 30 * 60  # 30 minutes in seconds
-
 # Graph data
 times = deque(maxlen=MAX_SAMPLES)
 raw_values = deque(maxlen=MAX_SAMPLES)
@@ -29,8 +24,15 @@ derivatives = deque(maxlen=MAX_SAMPLES)
 # Moving average buffer
 recent_values = deque(maxlen=SMOOTHING_WINDOW)
 
-# File data: last 30 minutes
+
+# File settings
+FILE_NAME = r"C:\Users\simon\PycharmProjects\ALT_Gasmatning\daq_readings.txt"
+
+SAVE_DURATION = 30 * 60
+CLEANUP_INTERVAL = 60
+
 recorded_data = deque()
+last_cleanup = time.monotonic()
 
 CSV_HEADER = [
     "Timestamp",
@@ -40,45 +42,46 @@ CSV_HEADER = [
     "Derivative (V/s)"
 ]
 
-# Clear previous file on startup
+# Clear the file when the program starts
 with open(FILE_NAME, "w", newline="", encoding="utf-8") as file:
     writer = csv.writer(file)
     writer.writerow(CSV_HEADER)
 
+print(f"Saving measurements to: {FILE_NAME}")
 
-def save_data():
-    """Save only the latest 30 minutes of readings."""
 
-    # Remove measurements older than 30 minutes
-    if recorded_data:
-        latest_time = recorded_data[-1][1]
-        cutoff = latest_time - SAVE_DURATION
+def save_data(row):
+    global last_cleanup
 
-        while recorded_data and recorded_data[0][1] < cutoff:
-            recorded_data.popleft()
+    recorded_data.append(row)
 
-    # Write to a temporary file first
-    directory = os.path.dirname(os.path.abspath(FILE_NAME))
+    # Append the newest measurement immediately
+    with open(FILE_NAME, "a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(row)
 
-    fd, temp_path = tempfile.mkstemp(
-        dir=directory,
-        suffix=".tmp"
-    )
+    # Remove old measurements from memory
+    current_time = row[1]
+    cutoff = current_time - SAVE_DURATION
 
-    try:
-        with os.fdopen(
-            fd, "w", newline="", encoding="utf-8"
-        ) as file:
-            writer = csv.writer(file)
-            writer.writerow(CSV_HEADER)
-            writer.writerows(recorded_data)
+    while recorded_data and recorded_data[0][1] < cutoff:
+        recorded_data.popleft()
 
-        # Replace old file with updated file
-        os.replace(temp_path, FILE_NAME)
+    # Rewrite file once per minute
+    now = time.monotonic()
 
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    if now - last_cleanup >= CLEANUP_INTERVAL:
+        try:
+            with open(FILE_NAME, "w", newline="", encoding="utf-8") as file:
+                writer = csv.writer(file)
+                writer.writerow(CSV_HEADER)
+                writer.writerows(recorded_data)
+
+            last_cleanup = now
+            print("Recording file cleaned successfully.")
+
+        except PermissionError as error:
+            print(f"Could not clean recording file: {error}")
 
 
 # Create figure
@@ -168,16 +171,13 @@ def update(frame):
         sep=" ", timespec="milliseconds"
     )
 
-    recorded_data.append([
+    save_data([
         timestamp,
         elapsed_time,
         voltage,
         smooth_voltage,
         derivative
     ])
-
-    # Save the latest 30 minutes to file
-    save_data()
 
     # Update graphs
     line1.set_data(list(times), list(raw_values))
@@ -193,12 +193,6 @@ def update(frame):
         ax.relim()
         ax.autoscale_view(scalex=False, scaley=True)
 
-    print(
-        f"Time: {elapsed_time:.2f}s | "
-        f"Raw: {voltage:.4f} V | "
-        f"Smoothed: {smooth_voltage:.4f} V | "
-        f"Derivative: {derivative:.4f} V/s"
-    )
 
     return line1, line2, line3
 
