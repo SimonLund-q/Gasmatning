@@ -4,3 +4,4 @@ Lib/
 Scripts/
 pyvenv.cfg
 share/
+daq_readings.txt
